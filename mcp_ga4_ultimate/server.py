@@ -23,6 +23,7 @@ from google.analytics.admin_v1beta.types import (
     ListPropertiesRequest, GetPropertyRequest
 )
 from google.auth import default
+from google.oauth2 import service_account
 
 class MCPGA4EnhancedUltimateServer:
     """Google Analytics 4 增强终极优化版MCP服务器"""
@@ -40,6 +41,32 @@ class MCPGA4EnhancedUltimateServer:
         print(f"   📊 属性ID: {self.property_id}", file=sys.stderr)
         print(f"   🔑 项目: {self.project_id}", file=sys.stderr)
         print("   🚀 增强版 - 54个高级功能，5个阶段完整覆盖!", file=sys.stderr)
+
+    def _get_credentials(self):
+        """获取Google认证凭据，优先使用GOOGLE_APPLICATION_CREDS环境变量指定的文件"""
+        try:
+            # 检查是否设置了GOOGLE_APPLICATION_CREDS环境变量
+            creds_path = os.getenv('GOOGLE_APPLICATION_CREDS')
+            if creds_path and os.path.exists(creds_path):
+                print(f"✅ 使用指定的认证文件: {creds_path}", file=sys.stderr)
+                credentials = service_account.Credentials.from_service_account_file(
+                    creds_path,
+                    scopes=[
+                        "https://www.googleapis.com/auth/analytics.readonly",
+                        "https://www.googleapis.com/auth/analytics.edit"
+                    ]
+                )
+                return credentials, None
+            else:
+                # 如果没有设置环境变量或文件不存在，使用默认的Application Default Credentials
+                print("⚠️ 未设置GOOGLE_APPLICATION_CREDS环境变量，使用默认认证", file=sys.stderr)
+                return default(scopes=[
+                    "https://www.googleapis.com/auth/analytics.readonly",
+                    "https://www.googleapis.com/auth/analytics.edit"
+                ])
+        except Exception as e:
+            print(f"❌ 认证失败: {str(e)}", file=sys.stderr)
+            raise ValueError(f"无法获取认证凭据: {str(e)}")
 
     def handle_initialize(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """处理MCP初始化请求"""
@@ -805,7 +832,7 @@ class MCPGA4EnhancedUltimateServer:
     def _get_basic_metrics_report(self, start_date: str, end_date: str, metrics: List[str], dimensions: List[str], limit: int) -> Dict[str, Any]:
         """获取基本指标报告"""
         try:
-            credentials, project = default(scopes=["https://www.googleapis.com/auth/analytics.readonly"])
+            credentials, project = self._get_credentials()
             client = BetaAnalyticsDataClient(credentials=credentials)
             
             request = RunReportRequest(
@@ -834,7 +861,7 @@ class MCPGA4EnhancedUltimateServer:
     def _get_traffic_analysis_report(self, start_date: str, end_date: str, metrics: List[str], dimensions: List[str], limit: int) -> Dict[str, Any]:
         """获取流量分析报告"""
         try:
-            credentials, project = default(scopes=["https://www.googleapis.com/auth/analytics.readonly"])
+            credentials, project = self._get_credentials()
             client = BetaAnalyticsDataClient(credentials=credentials)
             
             # 添加流量相关维度
@@ -867,7 +894,7 @@ class MCPGA4EnhancedUltimateServer:
     def _get_realtime_report(self, metrics: List[str], dimensions: List[str], limit: int) -> Dict[str, Any]:
         """获取实时报告"""
         try:
-            credentials, project = default(scopes=["https://www.googleapis.com/auth/analytics.readonly"])
+            credentials, project = self._get_credentials()
             client = BetaAnalyticsDataClient(credentials=credentials)
             
             # 实时报告只支持特定指标
@@ -901,7 +928,7 @@ class MCPGA4EnhancedUltimateServer:
     def _get_pivot_report(self, start_date: str, end_date: str, metrics: List[str], dimensions: List[str], pivot_dimensions: List[str], limit: int) -> Dict[str, Any]:
         """获取枢轴报告"""
         try:
-            credentials, project = default(scopes=["https://www.googleapis.com/auth/analytics.readonly"])
+            credentials, project = self._get_credentials()
             client = BetaAnalyticsDataClient(credentials=credentials)
             
             # 枢轴报告需要特殊的配置
@@ -949,7 +976,7 @@ class MCPGA4EnhancedUltimateServer:
     def _get_batch_processing_report(self, start_date: str, end_date: str, metrics: List[str], dimensions: List[str], batch_size: int, limit: int) -> Dict[str, Any]:
         """获取批处理报告"""
         try:
-            credentials, project = default(scopes=["https://www.googleapis.com/auth/analytics.readonly"])
+            credentials, project = self._get_credentials()
             client = BetaAnalyticsDataClient(credentials=credentials)
             
             request = RunReportRequest(
@@ -980,7 +1007,7 @@ class MCPGA4EnhancedUltimateServer:
     def _manage_custom_dimensions(self, action: str, name: str = None, display_name: str = None, description: str = None, scope: str = None) -> Dict[str, Any]:
         """管理自定义维度"""
         try:
-            credentials, project = default(scopes=["https://www.googleapis.com/auth/analytics.edit"])
+            credentials, project = self._get_credentials()
             client = AnalyticsAdminServiceClient(credentials=credentials)
             
             if action == "list":
@@ -1016,7 +1043,7 @@ class MCPGA4EnhancedUltimateServer:
     def _manage_custom_metrics(self, action: str, name: str = None, display_name: str = None, description: str = None, measurement_unit: str = None) -> Dict[str, Any]:
         """管理自定义指标"""
         try:
-            credentials, project = default(scopes=["https://www.googleapis.com/auth/analytics.edit"])
+            credentials, project = self._get_credentials()
             client = AnalyticsAdminServiceClient(credentials=credentials)
             
             if action == "list":
@@ -1052,7 +1079,7 @@ class MCPGA4EnhancedUltimateServer:
     def _manage_conversion_events(self, action: str, name: str = None, display_name: str = None) -> Dict[str, Any]:
         """管理转换事件"""
         try:
-            credentials, project = default(scopes=["https://www.googleapis.com/auth/analytics.edit"])
+            credentials, project = self._get_credentials()
             client = AnalyticsAdminServiceClient(credentials=credentials)
             
             if action == "list":
@@ -1087,7 +1114,7 @@ class MCPGA4EnhancedUltimateServer:
     def _manage_property_settings(self, action: str, name: str = None, display_name: str = None, time_zone: str = None, currency_code: str = None) -> Dict[str, Any]:
         """管理属性设置"""
         try:
-            credentials, project = default(scopes=["https://www.googleapis.com/auth/analytics.edit"])
+            credentials, project = self._get_credentials()
             client = AnalyticsAdminServiceClient(credentials=credentials)
             
             if action == "read":
