@@ -43,27 +43,82 @@ class MCPGA4EnhancedUltimateServer:
         print("   🚀 增强版 - 54个高级功能，5个阶段完整覆盖!", file=sys.stderr)
 
     def _get_credentials(self):
-        """获取Google认证凭据，优先使用GOOGLE_APPLICATION_CREDS环境变量指定的文件"""
+        """获取Google认证凭据，优先使用GOOGLE_APPLICATION_CREDENTIALS或GOOGLE_APPLICATION_CREDS环境变量指定的文件"""
         try:
-            # 检查是否设置了GOOGLE_APPLICATION_CREDS环境变量
-            creds_path = os.getenv('GOOGLE_APPLICATION_CREDS')
+            # 检查是否设置了GOOGLE_APPLICATION_CREDENTIALS环境变量（标准环境变量）
+            creds_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
+            # 如果未设置，检查GOOGLE_APPLICATION_CREDS（向后兼容）
+            if not creds_path:
+                creds_path = os.getenv('GOOGLE_APPLICATION_CREDS')
+            
             if creds_path and os.path.exists(creds_path):
                 print(f"✅ 使用指定的认证文件: {creds_path}", file=sys.stderr)
-                credentials = service_account.Credentials.from_service_account_file(
-                    creds_path,
-                    scopes=[
-                        "https://www.googleapis.com/auth/analytics.readonly",
-                        "https://www.googleapis.com/auth/analytics.edit"
-                    ]
-                )
-                return credentials, None
+                # 读取凭证文件判断类型
+                try:
+                    with open(creds_path, 'r') as f:
+                        creds_data = json.load(f)
+                        cred_type = creds_data.get('type', '')
+                        
+                        if cred_type == 'service_account':
+                            # 服务账号凭证
+                            print("📝 检测到服务账号凭证", file=sys.stderr)
+                            credentials = service_account.Credentials.from_service_account_file(
+                                creds_path,
+                                scopes=[
+                                    "https://www.googleapis.com/auth/analytics.readonly",
+                                    "https://www.googleapis.com/auth/analytics.edit"
+                                ]
+                            )
+                            return credentials, None
+                        elif cred_type == 'authorized_user':
+                            # OAuth用户凭证（gcloud生成的）
+                            print("📝 检测到授权用户凭证（authorized_user）", file=sys.stderr)
+                            # 对于authorized_user类型，需要设置环境变量后使用default()函数
+                            # 或者直接使用load_credentials_from_file
+                            os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = creds_path
+                            credentials, project = default(scopes=[
+                                "https://www.googleapis.com/auth/analytics.readonly",
+                                "https://www.googleapis.com/auth/analytics.edit"
+                            ])
+                            return credentials, project
+                        else:
+                            # 未知类型，尝试使用default()函数
+                            print(f"⚠️ 未知凭证类型: {cred_type}，尝试使用默认方式加载", file=sys.stderr)
+                            os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = creds_path
+                            credentials, project = default(scopes=[
+                                "https://www.googleapis.com/auth/analytics.readonly",
+                                "https://www.googleapis.com/auth/analytics.edit"
+                            ])
+                            return credentials, project
+                except (json.JSONDecodeError, KeyError, IOError) as e:
+                    # 如果无法解析JSON，尝试作为服务账号文件
+                    print(f"⚠️ 无法解析凭证文件，尝试作为服务账号文件: {str(e)}", file=sys.stderr)
+                    try:
+                        credentials = service_account.Credentials.from_service_account_file(
+                            creds_path,
+                            scopes=[
+                                "https://www.googleapis.com/auth/analytics.readonly",
+                                "https://www.googleapis.com/auth/analytics.edit"
+                            ]
+                        )
+                        return credentials, None
+                    except Exception as e2:
+                        # 如果服务账号方式也失败，尝试使用default()
+                        print(f"⚠️ 服务账号方式失败，尝试使用默认方式: {str(e2)}", file=sys.stderr)
+                        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = creds_path
+                        credentials, project = default(scopes=[
+                            "https://www.googleapis.com/auth/analytics.readonly",
+                            "https://www.googleapis.com/auth/analytics.edit"
+                        ])
+                        return credentials, project
             else:
                 # 如果没有设置环境变量或文件不存在，使用默认的Application Default Credentials
-                print("⚠️ 未设置GOOGLE_APPLICATION_CREDS环境变量，使用默认认证", file=sys.stderr)
-                return default(scopes=[
+                print("⚠️ 未设置GOOGLE_APPLICATION_CREDENTIALS或GOOGLE_APPLICATION_CREDS环境变量，使用默认认证", file=sys.stderr)
+                credentials, project = default(scopes=[
                     "https://www.googleapis.com/auth/analytics.readonly",
                     "https://www.googleapis.com/auth/analytics.edit"
                 ])
+                return credentials, project
         except Exception as e:
             print(f"❌ 认证失败: {str(e)}", file=sys.stderr)
             raise ValueError(f"无法获取认证凭据: {str(e)}")
