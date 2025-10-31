@@ -173,7 +173,7 @@ class MCPGA4EnhancedUltimateServer:
                         "dimensions": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "维度列表。标准报告可用：country, deviceCategory, sessionSource, firstUserSource, pagePath, pageTitle, city, region, language, browser, operatingSystem, landingPage, exitPage, referrer。实时报告可用：country, deviceCategory, city, region, language, browser, operatingSystem。注意：系统会自动去重重复维度和处理维度冲突",
+                            "description": "维度列表。标准报告可用：country, deviceCategory, sessionSource, firstUserSource, pagePath, pageTitle, city, region, language, browser, operatingSystem, landingPage, exitPage, referrer。实时报告仅支持：country, deviceCategory, city, language, operatingSystem（注意：region和browser在实时报告中不支持，系统会自动过滤）。注意：系统会自动去重重复维度和处理维度冲突",
                             "default": ["country", "deviceCategory"]
                         },
                         "funnel_steps": {
@@ -513,8 +513,8 @@ class MCPGA4EnhancedUltimateServer:
                             },
                             "ga4_dimensions": {
                                 "standard_reports": ["country", "deviceCategory", "sessionSource", "firstUserSource", "pagePath", "pageTitle", "city", "region", "language", "browser", "operatingSystem", "landingPage", "exitPage", "referrer"],
-                                "realtime_reports": ["country", "deviceCategory", "city", "region", "language", "browser", "operatingSystem"],
-                                "note": "系统会自动去重重复维度和指标，处理维度冲突（如sessionSource和firstUserSource）"
+                                "realtime_reports": ["country", "deviceCategory", "city", "language", "operatingSystem"],
+                                "note": "实时报告不支持region和browser维度，系统会自动过滤。标准报告支持所有列出的维度。系统会自动去重重复维度和指标，处理维度冲突（如sessionSource和firstUserSource）"
                             },
                             "optimization_benefits": [
                                 "从54个方法减少到6个核心方法",
@@ -547,19 +547,44 @@ class MCPGA4EnhancedUltimateServer:
             pivot_dimensions = []
         
         try:
+            # 用于保存实时报告的过滤信息
+            realtime_filter_info = None
+            # 保存原始维度，用于其他报告类型
+            original_dimensions = dimensions.copy() if dimensions else []
+            
             # 根据报告类型调整指标和维度
-            if report_type == "realtime_report":
+            # 实时报告需要特殊处理，因为只支持特定维度和指标
+            if report_type in ["realtime_report", "all"]:
                 # 实时报告只支持特定指标
                 realtime_metrics = ["screenPageViews", "activeUsers", "eventCount", "keyEvents"]
-                metrics = [m for m in metrics if m in realtime_metrics]
-                if not metrics:
-                    metrics = ["screenPageViews", "activeUsers"]
                 
-                # 实时报告只支持特定维度
-                realtime_dimensions = ["country", "deviceCategory", "city", "region", "language", "browser", "operatingSystem"]
-                dimensions = [d for d in dimensions if d in realtime_dimensions]
-                if not dimensions:
-                    dimensions = ["country", "deviceCategory"]
+                # 实时报告只支持特定维度（根据GA4 Realtime API实际支持情况）
+                # 注意：region和browser在实时报告中不支持，API会返回错误
+                realtime_dimensions = ["country", "deviceCategory", "city", "language", "operatingSystem"]
+                
+                # 为实时报告准备过滤后的维度（不影响其他报告类型使用的维度）
+                realtime_filtered_dimensions = [d for d in original_dimensions if d in realtime_dimensions]
+                removed_dimensions = [d for d in original_dimensions if d not in realtime_dimensions]
+                
+                if removed_dimensions:
+                    print(f"⚠️ 实时报告不支持以下维度，已自动过滤: {removed_dimensions}", file=sys.stderr)
+                    print(f"   支持的实时维度: {realtime_dimensions}", file=sys.stderr)
+                
+                # 保存过滤信息，以便在返回结果中包含
+                # 即使没有移除维度，也保存过滤后的维度列表，以便后续使用
+                realtime_filter_info = {
+                    "removed_dimensions": removed_dimensions,
+                    "supported_dimensions": realtime_dimensions,
+                    "filtered_dimensions": realtime_filtered_dimensions if realtime_filtered_dimensions else ["country", "deviceCategory"]
+                }
+                
+                # 如果只请求实时报告，则修改dimensions
+                if report_type == "realtime_report":
+                    # 实时报告只支持特定指标
+                    metrics = [m for m in metrics if m in realtime_metrics]
+                    if not metrics:
+                        metrics = ["screenPageViews", "activeUsers"]
+                    dimensions = realtime_filtered_dimensions if realtime_filtered_dimensions else ["country", "deviceCategory"]
             
             # 验证指标和维度，避免重复
             metrics = list(dict.fromkeys(metrics))  # 去重但保持顺序
@@ -603,8 +628,21 @@ class MCPGA4EnhancedUltimateServer:
                 result["data"]["traffic_analysis"] = traffic_data
             
             if report_type in ["realtime_report", "all"]:
-                # 实时报告
-                realtime_data = self._get_realtime_report(metrics, dimensions, limit)
+                # 实时报告 - 使用专门过滤后的维度和指标
+                realtime_metrics_for_call = [m for m in metrics if m in ["screenPageViews", "activeUsers", "eventCount", "keyEvents"]]
+                if not realtime_metrics_for_call:
+                    realtime_metrics_for_call = ["screenPageViews", "activeUsers"]
+                
+                realtime_dimensions_for_call = (
+                    realtime_filter_info["filtered_dimensions"] if realtime_filter_info and "filtered_dimensions" in realtime_filter_info 
+                    else ([d for d in dimensions if d in ["country", "deviceCategory", "city", "language", "operatingSystem"]] or ["country", "deviceCategory"])
+                )
+                
+                realtime_data = self._get_realtime_report(realtime_metrics_for_call, realtime_dimensions_for_call, limit)
+                # 如果过滤了维度，在结果中包含过滤信息
+                if realtime_filter_info and realtime_data.get("success", False):
+                    realtime_data["filter_info"] = realtime_filter_info
+                    realtime_data["note"] = f"以下维度在实时报告中不支持，已自动过滤: {realtime_filter_info['removed_dimensions']}"
                 result["data"]["realtime_report"] = realtime_data
             
             if report_type in ["pivot_report", "all"]:
@@ -958,9 +996,22 @@ class MCPGA4EnhancedUltimateServer:
             if not valid_metrics:
                 valid_metrics = ["screenPageViews", "activeUsers"]
             
+            # 实时报告只支持特定维度（根据GA4 Realtime API实际支持情况）
+            # 注意：region和browser在实时报告中不支持，需要在调用前过滤
+            realtime_dimensions = ["country", "deviceCategory", "city", "language", "operatingSystem"]
+            valid_dimensions = [d for d in dimensions if d in realtime_dimensions]
+            
+            # 如果过滤后有维度被移除，记录警告
+            removed_dimensions = [d for d in dimensions if d not in realtime_dimensions]
+            if removed_dimensions:
+                print(f"⚠️ 实时报告不支持以下维度，已自动过滤: {removed_dimensions}", file=sys.stderr)
+            
+            if not valid_dimensions:
+                valid_dimensions = ["country", "deviceCategory"]
+            
             request = RunRealtimeReportRequest(
                 property=f"properties/{self.property_id}",
-                dimensions=[Dimension(name=d) for d in dimensions],
+                dimensions=[Dimension(name=d) for d in valid_dimensions],
                 metrics=[Metric(name=m) for m in valid_metrics],
                 limit=limit
             )
@@ -978,7 +1029,26 @@ class MCPGA4EnhancedUltimateServer:
                 ]
             }
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            error_msg = str(e)
+            # 提供更友好的错误信息和建议
+            suggestions = []
+            if "dimension" in error_msg.lower() and "not a valid" in error_msg.lower():
+                suggestions.append("实时报告仅支持以下维度: country, deviceCategory, city, language, operatingSystem")
+                suggestions.append("不支持的维度（如region, browser）已被自动过滤")
+            if "metric" in error_msg.lower() and "not a valid" in error_msg.lower():
+                suggestions.append("实时报告仅支持以下指标: screenPageViews, activeUsers, eventCount, keyEvents")
+            
+            error_response = {
+                "success": False,
+                "error": error_msg,
+                "report_type": "realtime_report"
+            }
+            if suggestions:
+                error_response["suggestions"] = suggestions
+                error_response["supported_dimensions"] = ["country", "deviceCategory", "city", "language", "operatingSystem"]
+                error_response["supported_metrics"] = ["screenPageViews", "activeUsers", "eventCount", "keyEvents"]
+            
+            return error_response
 
     def _get_pivot_report(self, start_date: str, end_date: str, metrics: List[str], dimensions: List[str], pivot_dimensions: List[str], limit: int) -> Dict[str, Any]:
         """获取枢轴报告"""
